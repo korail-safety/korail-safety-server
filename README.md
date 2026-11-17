@@ -60,8 +60,3 @@ make/                # Make 시나리오 블루프린트 백업 (예정)
 | `uv run alembic downgrade -1` | 마지막 DB 변경 되돌리기 |
 | `docker compose down` | PostgreSQL 종료 (데이터 유지) |
 | `docker compose down -v` | PostgreSQL 종료 + 데이터 삭제 |
-
-## 관련 문서
-
-- [서버 API 명세](https://claude.ai/artifact/N1F8cy63wuarGxVvZVNhHw)
-- [개발 일지](https://claude.ai/artifact/PABBzja5MQbdSoTW3yPpy8)
