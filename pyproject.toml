@@ -1,0 +1,31 @@
+[project]
+name = "korail-safety-server"
+version = "0.1.0"
+description = "생성형 AI 기반 철도 안전교육 영상 자동화 서비스 서버"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.20.1",
+    "fastapi>=0.163.1",
+    "psycopg[binary]>=3.3.9",
+    "pydantic-settings>=2.16.3",
+    "python-multipart>=0.0.34",
+    "sqlalchemy>=2.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI 의존성 주입은 기본값에 Depends()를 쓰는 게 정석
+"app/api/**" = ["B008"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.5",
+]

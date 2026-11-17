@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# 환경변수 (비밀값)
+.env
+.env.*
+!.env.example
+
+# 업로드 파일
+storage/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
