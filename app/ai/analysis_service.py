@@ -51,7 +51,8 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
                             "text": (
                                 "첨부된 철도 사고 보고서에서 사고 개요, 사고 원인, 조치 사항, "
                                 "재발 방지 대책을 뽑아줘. 문서에 명시적으로 없는 내용은 "
-                                "추측하지 말고 빈 문자열로 둬."
+                                "추측하지 말고 빈 문자열로 둬. 각 항목은 핵심만 2~3문장 이내로 "
+                                "간결하게 요약해줘. 불필요하게 길게 설명하지 마."
                             ),
                         },
                     ],
@@ -65,6 +66,8 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
                     }
                 },
             )
+            print("=== RAW OUTPUT ===")
+            print(response.output_text)
             result = json.loads(response.output_text)
 
             for key, field_enum in FIELD_KEY_MAP.items():

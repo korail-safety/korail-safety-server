@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # 회원가입 공용 관리자 코드 (프론트로 절대 내려보내지 않는다)
     admin_signup_code: str = "change-me"
 
+    # OpenAI API 키 (분석 API에서 사용, 프론트로 절대 내려보내지 않는다)
+    openai_api_key: str
+
     # 로그인 토큰 서명 키
     secret_key: str = "change-me"
     # 로그인 유지 시간(분)

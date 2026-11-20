@@ -25,6 +25,9 @@ def start_analysis(video_id: UUID, background_tasks: BackgroundTasks, db: Sessio
     if report is None:
         raise HTTPException(404, detail={"code": "REPORT_NOT_FOUND", "message": "보고서가 아직 업로드되지 않았습니다."})
 
+#video_id로 걸러낸 다음 started_at 기준 내림차순 정렬해서 제일 최근 행 하나만 가져오게 함. 
+#job_id는 GET 요청할 땐 신경 안 써도 됨.
+#app/models/job.py에 "다시 시도하면 새 행을 추가하고, 가장 최근 행이 현재 상태다" 의 설계 원칙을 따름.
     job = Job(video_id=video_id, type=JobType.ANALYSIS, status=JobStatus.IN_PROGRESS)
     db.add(job)
     db.commit()
