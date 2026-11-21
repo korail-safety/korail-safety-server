@@ -1,12 +1,13 @@
 import base64
 import json
-from app.core.storage import read_bytes #S3에 업로드한 파일을 읽을 수 있도록 함.
 from datetime import UTC, datetime
+
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.ai.openai_client import get_openai_client
 from app.ai.schemas import EXTRACTED_FIELDS_SCHEMA
 from app.core.database import SessionLocal
+from app.core.storage import read_bytes  # S3에 업로드한 파일을 읽을 수 있도록 함.
 from app.models.enums import ExtractedField, JobStatus
 from app.models.extracted_item import ExtractedItem
 from app.models.job import Job
@@ -33,31 +34,40 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
 
         try:
             client = get_openai_client()
-            #file_key가 실제로 가리키는 저장소 방식에 맞게 조정
+
+            job.step = "READ_FILE"
+            db.commit()
+
+            # file_key가 실제로 가리키는 저장소 방식에 맞게 조정
             pdf_bytes = read_bytes(report.file_key)
             pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
+            job.step = "EXTRACT_KEY_INFO"
+            db.commit()
+
             response = client.responses.create(
                 model=MODEL,
-                input=[{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_file",
-                            "filename": report.original_file_name,
-                            "file_data": f"data:application/pdf;base64,{pdf_base64}",
-                        },
-                        {
-                            "type": "input_text",
-                            "text": (
-                                "첨부된 철도 사고 보고서에서 사고 개요, 사고 원인, 조치 사항, "
-                                "재발 방지 대책을 뽑아줘. 문서에 명시적으로 없는 내용은 "
-                                "추측하지 말고 빈 문자열로 둬. 각 항목은 핵심만 2~3문장 이내로 "
-                                "간결하게 요약해줘. 불필요하게 길게 설명하지 마."
-                            ),
-                        },
-                    ],
-                }],
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_file",
+                                "filename": report.original_file_name,
+                                "file_data": f"data:application/pdf;base64,{pdf_base64}",
+                            },
+                            {
+                                "type": "input_text",
+                                "text": (
+                                    "첨부된 철도 사고 보고서에서 사고 개요, 사고 원인, 조치 사항, "
+                                    "재발 방지 대책을 뽑아줘. 문서에 명시적으로 없는 내용은 "
+                                    "추측하지 말고 빈 문자열로 둬. 각 항목은 핵심만 2~3문장 이내로 "
+                                    "간결하게 요약해줘. 불필요하게 길게 설명하지 마."
+                                ),
+                            },
+                        ],
+                    }
+                ],
                 text={
                     "format": {
                         "type": "json_schema",
@@ -67,15 +77,17 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
                     }
                 },
             )
-            print("=== RAW OUTPUT ===")
-            print(response.output_text)
+            # OpenaAI 응답 가져온 거 삭제해야 함. 데이터 노출 위험있음.
+            # print("=== RAW OUTPUT ===");print(response.output_text)
             result = json.loads(response.output_text)
 
             for key, field_enum in FIELD_KEY_MAP.items():
                 content = result[key]
                 stmt = pg_insert(ExtractedItem).values(
-                    video_id=video_id, field_key=field_enum,
-                    content=content, ai_content=content,
+                    video_id=video_id,
+                    field_key=field_enum,
+                    content=content,
+                    ai_content=content,
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["video_id", "field_key"],
@@ -89,8 +101,8 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
             job.status = JobStatus.FAILED
             job.error_code = "ANALYSIS_FAILED"
             raise
-        finally:#실패와 성공과 관련없이 끝나면 알려줘야 할 것
-            job.finished_at = datetime.now(UTC) #app/models/job.py의 finished_at 컬럼
+        finally:  # 실패와 성공과 관련없이 끝나면 알려줘야 할 것
+            job.finished_at = datetime.now(UTC)  # app/models/job.py의 finished_at 컬럼
             db.commit()
     finally:
         db.close()
