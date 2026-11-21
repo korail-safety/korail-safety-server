@@ -36,7 +36,7 @@ def start_analysis(video_id: UUID, background_tasks: BackgroundTasks, db: Sessio
     background_tasks.add_task(run_analysis, video_id, report.id, job.id)
     return AnalyzeStartResponse(job_id=job.id, status=job.status)
 
-
+#FE에게 전달하는 코드
 @router.get("/{video_id}/analyze", response_model=AnalyzeStatusResponse)
 def get_analysis_status(video_id: UUID, db: Session = Depends(get_db)):
     job = db.scalar(

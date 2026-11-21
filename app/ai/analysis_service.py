@@ -1,5 +1,6 @@
 import base64
 import json
+from app.core.storage import read_bytes #S3에 업로드한 파일을 읽을 수 있도록 함.
 from datetime import UTC, datetime
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -32,9 +33,9 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
 
         try:
             client = get_openai_client()
-
-            with open(report.file_key, "rb") as f:  # TODO: file_key가 실제로 가리키는 저장소 방식에 맞게 조정
-                pdf_base64 = base64.b64encode(f.read()).decode("utf-8")
+            #file_key가 실제로 가리키는 저장소 방식에 맞게 조정
+            pdf_bytes = read_bytes(report.file_key)
+            pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
             response = client.responses.create(
                 model=MODEL,
