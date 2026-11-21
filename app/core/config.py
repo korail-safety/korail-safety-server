@@ -29,8 +29,17 @@ class Settings(BaseSettings):
     # 로그인 유지 시간(분)
     access_token_expire_minutes: int = 60 * 24 * 7
 
-    # 업로드 파일 저장 위치 (로컬 디스크). 나중에 S3로 바꿀 수 있게 경로만 DB에 저장
-    upload_dir: str = "storage"
+    # 파일 저장소 (AWS S3). DB에는 S3 키(경로)만 저장한다
+    # 키를 비워 두면 boto3 기본 방식(EC2 IAM 역할 등)으로 인증한다
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region: str = "ap-southeast-2"
+    s3_bucket: str = ""
+    # 브라우저에 주는 임시 파일 주소(presigned URL) 유효 시간(초)
+    presigned_url_expire_seconds: int = 60 * 60
+
+    # 보고서 업로드 최대 크기(MB)
+    max_report_size_mb: int = 20
 
     @property
     def is_production(self) -> bool:
