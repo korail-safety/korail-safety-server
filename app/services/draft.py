@@ -19,16 +19,19 @@ from app.services.video_files import delete_video_and_files
 DRAFT_STAGES = (VideoStage.ANALYSIS, VideoStage.STORYBOARD, VideoStage.GENERATION)
 
 
-def _not_found() -> AppError:
-    # 남의 작업도 "없는 작업"으로 처리 (존재 여부를 알려주지 않음)
-    return AppError(404, "VIDEO_NOT_FOUND", "영상 작업을 찾을 수 없습니다.")
+def _get_own(db: Session, user_id: int, video_id: uuid.UUID) -> Video:
+    """없으면 404, 남의 작업이면 403"""
+    video = db.get(Video, video_id)
+    if video is None:
+        raise AppError(404, "VIDEO_NOT_FOUND", "영상 작업을 찾을 수 없습니다.")
+    if video.created_by != user_id:
+        raise AppError(403, "FORBIDDEN", "본인 영상만 접근할 수 있습니다.")
+    return video
 
 
 def save_draft(db: Session, user_id: int, video_id: uuid.UUID) -> None:
     """분석 결과·스토리보드 화면의 "임시저장" 버튼. 여러 번 눌러도 된다."""
-    video = db.get(Video, video_id)
-    if video is None or video.created_by != user_id:
-        raise _not_found()
+    video = _get_own(db, user_id, video_id)
     if video.stage not in DRAFT_STAGES:
         # 분석 전(UPLOADED)이거나 이미 라이브러리에 저장된(COMPLETED) 작업
         raise AppError(409, "INVALID_STAGE", "지금 단계에서는 임시저장할 수 없습니다.")
@@ -85,9 +88,10 @@ def list_drafts(
 
 
 def delete_draft(db: Session, user_id: int, video_id: uuid.UUID) -> None:
-    video = db.scalar(_draft_query(user_id).where(Video.id == video_id))
-    if video is None:
-        raise _not_found()
+    video = _get_own(db, user_id, video_id)
+    if not video.is_draft or video.stage not in DRAFT_STAGES:
+        # 임시저장이 아닌 작업(업로드만 한 작업, 완성된 영상)은 여기서 지우지 않는다
+        raise AppError(404, "VIDEO_NOT_FOUND", "임시저장한 작업을 찾을 수 없습니다.")
     # AI 작업이 돌고 있으면 끝난 뒤 지운 작업에 결과를 쓰려다 실패하므로 막는다
     running = db.scalar(
         select(Job.id).where(Job.video_id == video_id, Job.status == JobStatus.IN_PROGRESS).limit(1)

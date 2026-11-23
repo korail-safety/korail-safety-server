@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.ai.analysis_service import run_analysis
@@ -79,8 +79,20 @@ def get_analysis_result(video_id: UUID, user: CurrentUser, db: Session = Depends
     if video.created_by != user.id:
         raise AppError(403, "FORBIDDEN", "본인 영상만 접근할 수 있습니다.")
 
+    report = db.scalar(select(Report).where(Report.video_id == video_id))
+    if report is None:
+        raise AppError(404, "REPORT_NOT_FOUND", "보고서가 아직 업로드되지 않았습니다.")
+    # 업로드 때 저장한 페이지 수. 없으면 분석 때 저장한 페이지 수로 대신한다
+    total_pages = report.page_count or db.scalar(
+        select(func.count()).select_from(ReportPage).where(ReportPage.report_id == report.id)
+    )
+
     items = db.scalars(select(ExtractedItem).where(ExtractedItem.video_id == video_id)).all()
+    # 화면에 보여줄 순서(사고 개요 → 원인 → 조치 → 재발 방지)대로 정렬
+    order = list(ExtractedField)
+    items = sorted(items, key=lambda i: order.index(i.field_key))
     return AnalysisResultResponse(
+        total_pages=total_pages or 0,
         items=[
             ExtractedItemResponse(
                 field_key=i.field_key,
@@ -91,7 +103,7 @@ def get_analysis_result(video_id: UUID, user: CurrentUser, db: Session = Depends
                 edited_at=i.edited_at,
             )
             for i in items
-        ]
+        ],
     )
 
 

@@ -41,12 +41,14 @@ def list_videos(
 
 
 def get_video(db: Session, user_id: int, video_id: uuid.UUID) -> Video:
-    """본인 라이브러리 영상 1개. 없거나 남의 영상이거나 아직 완성 전이면 404"""
+    """본인 라이브러리 영상 1개. 없거나 아직 완성 전이면 404, 남의 영상이면 403"""
     video = db.scalar(
-        _library_query(user_id).where(Video.id == video_id).options(joinedload(Video.accident_type))
+        select(Video).where(Video.id == video_id).options(joinedload(Video.accident_type))
     )
-    if video is None:
+    if video is None or video.stage != VideoStage.COMPLETED:
         raise AppError(404, "VIDEO_NOT_FOUND", "영상을 찾을 수 없습니다.")
+    if video.created_by != user_id:
+        raise AppError(403, "FORBIDDEN", "본인 영상만 접근할 수 있습니다.")
     return video
 
 
