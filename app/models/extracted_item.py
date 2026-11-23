@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Identity, Integer, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -26,3 +27,4 @@ class ExtractedItem(Base):
     source_page: Mapped[int | None] = mapped_column(Integer)
     source_text: Mapped[str | None] = mapped_column(Text)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_rects: Mapped[list[dict] | None] = mapped_column(JSONB)

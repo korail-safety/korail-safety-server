@@ -21,12 +21,20 @@ class AnalyzeStatusResponse(CamelModel):  # GET/videos/{video_id}/analysis에서
     error_code: str | None = None
 
 
+class SourceRect(CamelModel):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
 class ExtractedItemResponse(CamelModel):
     field_key: str
     content: str
     ai_content: str
     source_page: int | None = None
     source_text: str | None = None
+    source_rects: list[SourceRect] | None = None
     edited_at: datetime | None = None
 
 
@@ -39,6 +47,7 @@ class AnalysisResultResponse(CamelModel):
 class ReportPageResponse(CamelModel):
     page_no: int
     text: str
+    image_url: str | None = None
 
 
 class UpdateItemRequest(BaseModel):  # 요청 바디라 camelCase 불필요
