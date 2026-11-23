@@ -31,6 +31,8 @@ class ExtractedItemResponse(CamelModel):
 
 
 class AnalysisResultResponse(CamelModel):
+    # 보고서 전체 페이지 수 (원문 뷰어 페이지 이동용)
+    total_pages: int
     items: list[ExtractedItemResponse]
 
 
