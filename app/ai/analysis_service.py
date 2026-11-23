@@ -47,88 +47,101 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
             job.step = "READ_FILE"
             db.commit()
 
-            # file_key가 실제로 가리키는 저장소 방식에 맞게 조정
-            pdf_bytes = read_bytes(report.file_key)
-            pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+            try:
+                # file_key가 실제로 가리키는 저장소 방식에 맞게 조정
+                pdf_bytes = read_bytes(report.file_key)
+                pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
-            # report_pages 저장 (OpenAI 호출과는 독립적인 작업)
-            reader = PdfReader(BytesIO(pdf_bytes))
-            for i, page in enumerate(reader.pages):
-                stmt = pg_insert(ReportPage).values(
-                    report_id=report.id,
-                    page_no=i + 1,  # 1부터 시작
-                    text=_clean_text(page.extract_text() or ""),
-                )
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["report_id", "page_no"],
-                    set_={"text": stmt.excluded.text},
-                )
-                db.execute(stmt)
-            db.commit()
+                # report_pages 저장 (OpenAI 호출과는 독립적인 작업)
+                reader = PdfReader(BytesIO(pdf_bytes))
+                for i, page in enumerate(reader.pages):
+                    stmt = pg_insert(ReportPage).values(
+                        report_id=report.id,
+                        page_no=i + 1,  # 1부터 시작
+                        text=_clean_text(page.extract_text() or ""),
+                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["report_id", "page_no"],
+                        set_={"text": stmt.excluded.text},
+                    )
+                    db.execute(stmt)
+                db.commit()
+            except Exception:
+                job.error_code = "E-101"
+                raise
 
             job.step = "EXTRACT_KEY_INFO"
             db.commit()
 
-            response = client.responses.create(
-                model=MODEL,
-                input=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "input_file",
-                                "filename": report.original_file_name,
-                                "file_data": f"data:application/pdf;base64,{pdf_base64}",
-                            },
-                            {
-                                "type": "input_text",
-                                "text": (
-                                    "첨부된 철도 사고 보고서에서 사고 개요, 사고 원인, 조치 사항, "
-                                    "재발 방지 대책을 뽑아줘. 문서에 명시적으로 없는 내용은 "
-                                    "추측하지 말고 빈 문자열로 둬. 각 항목은 핵심만 2~3문장 이내로 "
-                                    "간결하게 요약해줘. 불필요하게 길게 설명하지 마. "
-                                    "각 항목마다 그 내용의 근거가 되는 페이지 번호(source_page, "
-                                    "1부터 시작)와 근거 원문 일부(source_text)도 함께 알려줘. "
-                                    "근거를 명확히 특정할 수 없으면 둘 다 null로 둬."
-                                ),
-                            },
-                        ],
-                    }
-                ],
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "name": "extracted_fields",
-                        "schema": EXTRACTED_FIELDS_SCHEMA,
-                        "strict": True,
-                    }
-                },
-            )
-            # OpenaAI 응답 가져온 거 삭제해야 함. 데이터 노출 위험있음.
-            # print("=== RAW OUTPUT ===");print(response.output_text)
-            result = json.loads(response.output_text)
+            try:
+                response = client.responses.create(
+                    model=MODEL,
+                    input=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_file",
+                                    "filename": report.original_file_name,
+                                    "file_data": f"data:application/pdf;base64,{pdf_base64}",
+                                },
+                                {
+                                    "type": "input_text",
+                                    "text": (
+                                        "첨부된 철도 사고 보고서에서 "
+                                        "사고 개요, 사고 원인, 조치 사항, "
+                                        "재발 방지 대책을 뽑아줘. "
+                                        "문서에 명시적으로 없는 내용은 "
+                                        "추측하지 말고 빈 문자열로 둬. "
+                                        "각 항목은 핵심만 5문장 이내로 "
+                                        "간결하게 요약해줘. "
+                                        "불필요하게 길게 설명하지 마. "
+                                        "각 항목마다 그 내용의 근거가 되는 "
+                                        "페이지 번호(source_page, 1부터 시작)와 "
+                                        "근거 원문 일부(source_text)도 함께 알려줘. "
+                                        "근거를 명확히 특정할 수 없으면 "
+                                        "둘 다 null로 둬."
+                                    ),
+                                },
+                            ],
+                        }
+                    ],
+                    text={
+                        "format": {
+                            "type": "json_schema",
+                            "name": "extracted_fields",
+                            "schema": EXTRACTED_FIELDS_SCHEMA,
+                            "strict": True,
+                        }
+                    },
+                )
+                # OpenaAI 응답 가져온 거 삭제해야 함. 데이터 노출 위험있음.
+                # print("=== RAW OUTPUT ===");print(response.output_text)
+                result = json.loads(response.output_text)
 
-            for key, field_enum in FIELD_KEY_MAP.items():
-                item = result[key]
-                values = {
-                    "content": item["content"],
-                    "ai_content": item["content"],
-                    "source_page": item.get("source_page"),
-                    "source_text": item.get("source_text"),
-                }
-                stmt = pg_insert(ExtractedItem).values(
-                    video_id=video_id, field_key=field_enum, **values
-                )
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["video_id", "field_key"], set_=values
-                )
-                db.execute(stmt)
+                for key, field_enum in FIELD_KEY_MAP.items():
+                    item = result[key]
+                    values = {
+                        "content": item["content"],
+                        "ai_content": item["content"],
+                        "source_page": item.get("source_page"),
+                        "source_text": item.get("source_text"),
+                    }
+                    stmt = pg_insert(ExtractedItem).values(
+                        video_id=video_id, field_key=field_enum, **values
+                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["video_id", "field_key"], set_=values
+                    )
+                    db.execute(stmt)
+            except Exception:
+                job.error_code = "E-102"
+                raise
 
             job.status = JobStatus.COMPLETED
 
         except Exception:
             job.status = JobStatus.FAILED
-            job.error_code = "ANALYSIS_FAILED"
             raise
         finally:  # 실패와 성공과 관련없이 끝나면 알려줘야 할 것
             job.finished_at = datetime.now(UTC)  # app/models/job.py의 finished_at 컬럼
