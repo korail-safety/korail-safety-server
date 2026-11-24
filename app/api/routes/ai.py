@@ -25,11 +25,27 @@ from app.models.job import Job
 from app.models.report import Report, ReportPage
 from app.models.video import Video
 
+
 def _to_response(item: ExtractedItem) -> ExtractedItemResponse:
     """ExtractedItem.source_rects(JSON)를 sources 목록 + 구버전 호환 필드로 변환."""
-    raw_sources: list[dict] = item.source_rects or []
-    sources = [ExtractedSource(**s) for s in raw_sources]
-    legacy_rects = raw_sources[0].get("rects") if raw_sources else None
+    raw: list[dict] = item.source_rects or []
+    if raw and "page" in raw[0]:
+        # 새 형식: 근거 목록 [{page, text, rects}]
+        sources = [ExtractedSource(**s) for s in raw]
+        legacy_rects = raw[0].get("rects")
+    else:
+        # 예전 형식(근거 여러 개 지원 전에 분석한 작업): 좌표 목록 [{x, y, width, height}]만 있음
+        # → 기존 source_page·source_text와 묶어서 근거 1개로 감싼다
+        legacy_rects = raw or None
+        sources = (
+            [
+                ExtractedSource(
+                    page=item.source_page, text=item.source_text or "", rects=legacy_rects
+                )
+            ]
+            if item.source_page
+            else []
+        )
     return ExtractedItemResponse(
         field_key=item.field_key,
         content=item.content,
@@ -40,6 +56,7 @@ def _to_response(item: ExtractedItem) -> ExtractedItemResponse:
         sources=sources,
         edited_at=item.edited_at,
     )
+
 
 router = APIRouter(prefix="/videos", tags=["ai"])
 
