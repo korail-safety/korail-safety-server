@@ -27,16 +27,23 @@ class SourceRect(CamelModel):
     width: float
     height: float
 
+class ExtractedSource(CamelModel):
+    """근거 하나 (페이지, 원문 일부, 박스 좌표)"""
+
+    page: int
+    text: str 
+    rects: list[SourceRect] | None = None
 
 class ExtractedItemResponse(CamelModel):
     field_key: str
     content: str
     ai_content: str
+    # 구버전 프론트 호환용 — sources[0]과 동일한 값
     source_page: int | None = None
     source_text: str | None = None
     source_rects: list[SourceRect] | None = None
+    sources: list[ExtractedSource] = []
     edited_at: datetime | None = None
-
 
 class AnalysisResultResponse(CamelModel):
     # 보고서 전체 페이지 수 (원문 뷰어 페이지 이동용)
@@ -61,16 +68,27 @@ def _field_schema(description: str) -> dict:
         "description": description,
         "properties": {
             "content": {"type": "string"},
-            "source_page": {
-                "type": ["integer", "null"],
-                "description": "근거 페이지 번호(1부터 시작), 없으면 null",
-            },
-            "source_text": {
-                "type": ["string", "null"],
-                "description": "근거가 되는 원문 일부, 없으면 null",
+            "sources": {
+                "type": "array",
+                "description": "이 내용의 근거가 되는 원문 위치 목록. 근거를 찾을 수 없으면 빈 배열.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "source_page": {
+                            "type": "integer",
+                            "description": "근거 페이지 번호(1부터 시작)",
+                        },
+                        "source_text": {
+                            "type": "string",
+                            "description": "근거가 되는 원문 일부",
+                        },
+                    },
+                    "required": ["source_page", "source_text"],
+                    "additionalProperties": False,
+                },
             },
         },
-        "required": ["content", "source_page", "source_text"],
+        "required": ["content", "sources"],
         "additionalProperties": False,
     }
 
