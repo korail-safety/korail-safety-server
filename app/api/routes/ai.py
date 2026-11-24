@@ -15,6 +15,7 @@ from app.ai.schemas import (
     UpdateItemRequest,
 )
 from app.api.deps import CurrentUser
+from app.core import storage
 from app.core.database import get_db
 from app.core.errors import AppError
 from app.models.enums import ExtractedField, JobStatus, JobType, VideoStage
@@ -100,6 +101,7 @@ def get_analysis_result(video_id: UUID, user: CurrentUser, db: Session = Depends
                 ai_content=i.ai_content,
                 source_page=i.source_page,
                 source_text=i.source_text,
+                source_rects=i.source_rects,
                 edited_at=i.edited_at,
             )
             for i in items
@@ -124,7 +126,10 @@ def get_report_page(video_id: UUID, page: int, user: CurrentUser, db: Session = 
     )
     if report_page is None:
         raise AppError(404, "PAGE_NOT_FOUND", "해당 페이지를 찾을 수 없습니다.")
-    return ReportPageResponse(page_no=report_page.page_no, text=report_page.text)
+    image_url = storage.presigned_url(report_page.image_key) if report_page.image_key else None
+    return ReportPageResponse(
+        page_no=report_page.page_no, text=report_page.text, image_url=image_url
+    )
 
 
 @router.patch("/{video_id}/analysis/result/items/{key}", response_model=ExtractedItemResponse)
@@ -164,5 +169,6 @@ def update_extracted_item(
         ai_content=item.ai_content,
         source_page=item.source_page,
         source_text=item.source_text,
+        source_rects=item.source_rects,
         edited_at=item.edited_at,
     )

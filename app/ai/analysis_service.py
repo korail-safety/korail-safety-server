@@ -4,20 +4,19 @@ import re
 from datetime import UTC, datetime
 from io import BytesIO
 
-from pypdf import PdfReader
+import pypdfium2 as pdfium
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.ai.openai_client import get_openai_client
 from app.ai.schemas import EXTRACTED_FIELDS_SCHEMA
+from app.core import storage
 from app.core.database import SessionLocal
-from app.core.storage import read_bytes  # S3에 업로드한 파일을 읽을 수 있도록 함.
+from app.core.storage import read_bytes
 from app.models.enums import ExtractedField, JobStatus
 from app.models.extracted_item import ExtractedItem
 from app.models.job import Job
-from app.models.report import Report, ReportPage  # ReportPage 추가
+from app.models.report import Report, ReportPage
 
-# 화요일 데드라인 때문에 분기 없이 PDF 전체를 통째로 AI에게 넘긴다.
-# (원래 설계했던 텍스트 추출 우선 분기는 추후 구현 노트 문서 참고)
 MODEL = "gpt-5.6-luna"
 
 FIELD_KEY_MAP = {
@@ -34,6 +33,39 @@ def _clean_text(text: str) -> str:
     return _CONTROL_CHARS.sub("", text)
 
 
+def _find_source_rects(page: "pdfium.PdfPage", source_text: str) -> list[dict] | None:
+    """페이지 안에서 source_text를 찾아 좌표(0~1 비율, 왼쪽 위 원점)로 변환한다.
+    못 찾으면 None (프론트에서 텍스트로 대체 표시)."""
+    if not source_text:
+        return None
+
+    width, height = page.get_size()
+    textpage = page.get_textpage()
+    rects: list[dict] = []
+    try:
+        searcher = textpage.search(source_text, match_case=False, match_whole_word=False)
+        while True:
+            match = searcher.get_next()  # 미검증: 버전에 따라 메서드명이 다를 수 있음
+            if match is None:
+                break
+            index, count = match
+            n = textpage.count_rects(index, count)
+            for i in range(n):
+                left, bottom, right, top = textpage.get_rect(i)
+                rects.append(
+                    {
+                        "x": left / width,
+                        "y": (height - top) / height,
+                        "width": (right - left) / width,
+                        "height": (top - bottom) / height,
+                    }
+                )
+        searcher.close()
+    except Exception:
+        return None
+    return rects or None
+
+
 def run_analysis(video_id, report_id: int, job_id: int) -> None:
     """백그라운드에서 실행되는 함수라 요청용 DB 세션을 그대로 쓰면 안 되고, 새 세션을 직접 연다."""
     db = SessionLocal()
@@ -48,21 +80,30 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
             db.commit()
 
             try:
-                # file_key가 실제로 가리키는 저장소 방식에 맞게 조정
                 pdf_bytes = read_bytes(report.file_key)
                 pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
-                # report_pages 저장 (OpenAI 호출과는 독립적인 작업)
-                reader = PdfReader(BytesIO(pdf_bytes))
-                for i, page in enumerate(reader.pages):
+                pdf = pdfium.PdfDocument(pdf_bytes)
+                for i, page in enumerate(pdf):
+                    page_no = i + 1
+                    textpage = page.get_textpage()
+                    text = _clean_text(textpage.get_text_range() or "")
+
+                    bitmap = page.render(scale=2)  # 약 144dpi
+                    buf = BytesIO()
+                    bitmap.to_pil().save(buf, format="PNG")
+                    image_key = f"reports/{video_id}/pages/{page_no}.png"
+                    storage.upload_bytes(image_key, buf.getvalue(), "image/png")
+
                     stmt = pg_insert(ReportPage).values(
                         report_id=report.id,
-                        page_no=i + 1,  # 1부터 시작
-                        text=_clean_text(page.extract_text() or ""),
+                        page_no=page_no,
+                        text=text,
+                        image_key=image_key,
                     )
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["report_id", "page_no"],
-                        set_={"text": stmt.excluded.text},
+                        set_={"text": stmt.excluded.text, "image_key": stmt.excluded.image_key},
                     )
                     db.execute(stmt)
                 db.commit()
@@ -115,17 +156,22 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
                         }
                     },
                 )
-                # OpenaAI 응답 가져온 거 삭제해야 함. 데이터 노출 위험있음.
-                # print("=== RAW OUTPUT ===");print(response.output_text)
                 result = json.loads(response.output_text)
 
                 for key, field_enum in FIELD_KEY_MAP.items():
                     item = result[key]
+                    source_page = item.get("source_page")
+                    source_text = item.get("source_text")
+                    source_rects = None
+                    if source_page and source_text and 1 <= source_page <= len(pdf):
+                        source_rects = _find_source_rects(pdf[source_page - 1], source_text)
+
                     values = {
                         "content": item["content"],
                         "ai_content": item["content"],
-                        "source_page": item.get("source_page"),
-                        "source_text": item.get("source_text"),
+                        "source_page": source_page,
+                        "source_text": source_text,
+                        "source_rects": source_rects,
                     }
                     stmt = pg_insert(ExtractedItem).values(
                         video_id=video_id, field_key=field_enum, **values
@@ -137,14 +183,16 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
             except Exception:
                 job.error_code = "E-102"
                 raise
+            finally:
+                pdf.close()
 
             job.status = JobStatus.COMPLETED
 
         except Exception:
             job.status = JobStatus.FAILED
             raise
-        finally:  # 실패와 성공과 관련없이 끝나면 알려줘야 할 것
-            job.finished_at = datetime.now(UTC)  # app/models/job.py의 finished_at 컬럼
+        finally:
+            job.finished_at = datetime.now(UTC)
             db.commit()
     finally:
         db.close()
