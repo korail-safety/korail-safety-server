@@ -11,6 +11,7 @@ from app.ai.schemas import (
     AnalyzeStartResponse,
     AnalyzeStatusResponse,
     ExtractedItemResponse,
+    ExtractedSource,
     ReportPageResponse,
     UpdateItemRequest,
 )
@@ -23,6 +24,22 @@ from app.models.extracted_item import ExtractedItem
 from app.models.job import Job
 from app.models.report import Report, ReportPage
 from app.models.video import Video
+
+def _to_response(item: ExtractedItem) -> ExtractedItemResponse:
+    """ExtractedItem.source_rects(JSON)를 sources 목록 + 구버전 호환 필드로 변환."""
+    raw_sources: list[dict] = item.source_rects or []
+    sources = [ExtractedSource(**s) for s in raw_sources]
+    legacy_rects = raw_sources[0].get("rects") if raw_sources else None
+    return ExtractedItemResponse(
+        field_key=item.field_key,
+        content=item.content,
+        ai_content=item.ai_content,
+        source_page=item.source_page,
+        source_text=item.source_text,
+        source_rects=legacy_rects,
+        sources=sources,
+        edited_at=item.edited_at,
+    )
 
 router = APIRouter(prefix="/videos", tags=["ai"])
 
@@ -94,18 +111,7 @@ def get_analysis_result(video_id: UUID, user: CurrentUser, db: Session = Depends
     items = sorted(items, key=lambda i: order.index(i.field_key))
     return AnalysisResultResponse(
         total_pages=total_pages or 0,
-        items=[
-            ExtractedItemResponse(
-                field_key=i.field_key,
-                content=i.content,
-                ai_content=i.ai_content,
-                source_page=i.source_page,
-                source_text=i.source_text,
-                source_rects=i.source_rects,
-                edited_at=i.edited_at,
-            )
-            for i in items
-        ],
+        items=[_to_response(i) for i in items],
     )
 
 
@@ -163,12 +169,4 @@ def update_extracted_item(
     item.edited_at = datetime.now(UTC)
     db.commit()
     db.refresh(item)
-    return ExtractedItemResponse(
-        field_key=item.field_key,
-        content=item.content,
-        ai_content=item.ai_content,
-        source_page=item.source_page,
-        source_text=item.source_text,
-        source_rects=item.source_rects,
-        edited_at=item.edited_at,
-    )
+    return _to_response(item)
