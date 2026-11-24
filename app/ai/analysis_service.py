@@ -80,6 +80,7 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
             db.commit()
 
             try:
+                #파일 업로드한 그대로 저장소에서 읽어옴
                 pdf_bytes = read_bytes(report.file_key)
                 pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
@@ -115,7 +116,7 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
             db.commit()
 
             try:
-                response = client.responses.create(
+                response = client.with_options(timeout=180.0).responses.create(
                     model=MODEL,
                     input=[
                         {
@@ -140,6 +141,12 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
                                         "각 항목마다 그 내용의 근거가 되는 "
                                         "페이지 번호(source_page, 1부터 시작)와 "
                                         "근거 원문 일부(source_text)도 함께 알려줘. "
+                                        "source_text는 문서 원문에서 이어지는 "
+                                        "한 구절을 한 글자도 바꾸지 말고 "
+                                        "그대로 복사해줘. 절대 요약하거나 "
+                                        "줄여 쓰지 말고, '…'이나 '...' 같은 "
+                                        "생략 표시도 쓰지 마. 40자를 넘지 않는 "
+                                        "짧은 구절로 골라줘. "
                                         "근거를 명확히 특정할 수 없으면 "
                                         "둘 다 null로 둬."
                                     ),
@@ -189,6 +196,7 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
             job.status = JobStatus.COMPLETED
 
         except Exception:
+            db.rollback()
             job.status = JobStatus.FAILED
             raise
         finally:
