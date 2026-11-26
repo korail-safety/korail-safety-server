@@ -1,11 +1,12 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.ai.analysis_service import run_analysis
+#분석용
 from app.ai.schemas import (
     AnalysisResultResponse,
     AnalyzeStartResponse,
@@ -24,7 +25,10 @@ from app.models.extracted_item import ExtractedItem
 from app.models.job import Job
 from app.models.report import Report, ReportPage
 from app.models.video import Video
-
+#스토리보드용
+from app.ai.storyboard_schemas import StoryboardResponse, StoryboardRevisionRequest, StoryboardScene 
+from app.ai.storyboard_service import generate_storyboard, regenerate_scene_image 
+from app.models.storyboard import Storyboard #DB 모델
 
 def _to_response(item: ExtractedItem) -> ExtractedItemResponse:
     """ExtractedItem.source_rects(JSON)를 sources 목록 + 구버전 호환 필드로 변환."""
@@ -187,3 +191,174 @@ def update_extracted_item(
     db.commit()
     db.refresh(item)
     return _to_response(item)
+
+@router.get("/{video_id}/storyboard", response_model=StoryboardResponse)
+def get_storyboard(video_id: UUID, user: CurrentUser, db: Session = Depends(get_db)):
+    video = db.get(Video, video_id)
+    if video is None:
+        raise AppError(404, "VIDEO_NOT_FOUND", "영상을 찾을 수 없습니다.")
+    if video.created_by != user.id:
+        raise AppError(403, "FORBIDDEN", "본인 영상만 접근할 수 있습니다.")
+
+    latest_rev = (
+        select(Storyboard.scene_index, func.max(Storyboard.revision).label("max_rev"))
+        .where(Storyboard.video_id == video_id)
+        .group_by(Storyboard.scene_index)
+        .subquery()
+    )
+    storyboard_rows = db.scalars(
+        select(Storyboard)
+        .join(
+            latest_rev,
+            (Storyboard.scene_index == latest_rev.c.scene_index)
+            & (Storyboard.revision == latest_rev.c.max_rev),
+        )
+        .where(Storyboard.video_id == video_id)
+        .order_by(Storyboard.scene_index)
+    ).all()
+
+    if not storyboard_rows:
+        setup_job = db.scalar(
+            select(Job)
+            .where(Job.video_id == video_id, Job.type == JobType.STORYBOARD, Job.scene_index.is_(None))
+            .order_by(Job.started_at.desc())
+        )
+        if setup_job is None:
+            raise AppError(404, "JOB_NOT_FOUND", "스토리보드 생성이 시작되지 않았습니다.")
+        return StoryboardResponse(status=setup_job.status, scenes=[], error_code=setup_job.error_code)
+
+    latest_job = (
+        select(Job.scene_index, func.max(Job.started_at).label("max_started"))
+        .where(Job.video_id == video_id, Job.type == JobType.STORYBOARD)
+        .group_by(Job.scene_index)
+        .subquery()
+    )
+    job_by_scene = {
+        j.scene_index: j
+        for j in db.scalars(
+            select(Job)
+            .join(
+                latest_job,
+                (Job.scene_index == latest_job.c.scene_index)
+                & (Job.started_at == latest_job.c.max_started),
+            )
+            .where(Job.video_id == video_id, Job.type == JobType.STORYBOARD)
+        ).all()
+    }
+
+    scenes = []
+    overall_status, overall_error = "COMPLETED", None
+    for row in storyboard_rows:
+        job = job_by_scene.get(row.scene_index)
+        scene_status = job.status if job else "COMPLETED"
+        scene_error = job.error_code if job else None
+        if scene_status == JobStatus.IN_PROGRESS:
+            overall_status = "IN_PROGRESS"
+        elif scene_status == JobStatus.FAILED and overall_status != "IN_PROGRESS":
+            overall_status, overall_error = "FAILED", scene_error
+
+        scenes.append(
+            StoryboardScene(
+                index=row.scene_index,
+                image_url=storage.presigned_url(row.image_key) if row.image_key else None,
+                description=row.description,
+                duration_sec=row.duration_sec,
+                status=scene_status,
+                error_code=scene_error,
+            )
+        )
+
+    return StoryboardResponse(status=overall_status, scenes=scenes, error_code=overall_error)
+
+@router.post("/{video_id}/storyboard", status_code=202)
+def start_storyboard(
+    video_id: UUID,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    video = db.get(Video, video_id)
+    if video is None:
+        raise AppError(404, "VIDEO_NOT_FOUND", "영상을 찾을 수 없습니다.")
+    if video.created_by != user.id:
+        raise AppError(403, "FORBIDDEN", "본인 영상만 접근할 수 있습니다.")
+
+    existing = db.scalar(
+        select(Storyboard.id).where(Storyboard.video_id == video_id).limit(1)
+    )
+    if existing is not None:
+        raise AppError(409, "STORYBOARD_ALREADY_EXISTS", "이미 스토리보드가 생성된 영상입니다.")
+
+    has_analysis = db.scalar(
+        select(ExtractedItem.video_id).where(ExtractedItem.video_id == video_id).limit(1)
+    )
+    if has_analysis is None:
+        raise AppError(409, "ANALYSIS_NOT_COMPLETED", "분석 결과가 없습니다.")
+
+    job = Job(video_id=video_id, type=JobType.STORYBOARD, status=JobStatus.IN_PROGRESS)
+    db.add(job)
+    video.stage = VideoStage.STORYBOARD
+    db.commit()
+    db.refresh(job)
+
+    background_tasks.add_task(generate_storyboard, video_id, job.id)
+    return Response(status_code=202)
+
+@router.post("/{video_id}/storyboard/revisions", status_code=202)
+def create_storyboard_revision(
+    video_id: UUID,
+    body: StoryboardRevisionRequest,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    video = db.get(Video, video_id)
+    if video is None:
+        raise AppError(404, "VIDEO_NOT_FOUND", "영상을 찾을 수 없습니다.")
+    if video.created_by != user.id:
+        raise AppError(403, "FORBIDDEN", "본인 영상만 접근할 수 있습니다.")
+
+    in_progress = db.scalar(
+        select(Job).where(
+            Job.video_id == video_id,
+            Job.scene_index == body.scene_index,
+            Job.type == JobType.STORYBOARD,
+            Job.status == JobStatus.IN_PROGRESS,
+        )
+    )
+    if in_progress is not None:
+        raise AppError(409, "STORYBOARD_IN_PROGRESS", "이미 생성 중인 장면입니다.")
+
+    previous = db.scalar(
+        select(Storyboard)
+        .where(
+            Storyboard.video_id == video_id,
+            Storyboard.scene_index == body.scene_index,
+        )
+        .order_by(Storyboard.revision.desc())
+    )
+    if previous is None:
+        raise AppError(400, "INVALID_INPUT", "존재하지 않는 장면 번호입니다.")
+
+    storyboard = Storyboard(
+        video_id=video_id,
+        scene_index=body.scene_index,
+        revision=previous.revision + 1,
+        prompt=body.prompt,
+    )
+    db.add(storyboard)
+
+    job = Job(
+        video_id=video_id,
+        type=JobType.STORYBOARD,
+        scene_index=body.scene_index,
+        status=JobStatus.IN_PROGRESS,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(storyboard)
+    db.refresh(job)
+
+    background_tasks.add_task(
+        regenerate_scene_image, video_id, body.scene_index, storyboard.id, job.id, previous.image_key
+    )
