@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, File, UploadFile, status
+from fastapi import APIRouter, File, Response, UploadFile, status
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import settings
@@ -34,3 +34,10 @@ def replace_report(
     pdf = report_service.validate_pdf(file.filename, _read_limited(file))
     video = report_service.replace_report(db, user, video_id, pdf)
     return UploadReportResponse(video_id=video.id)
+
+
+@router.delete("/{video_id}/analysis", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_analysis(video_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Response:
+    """분석 중단: 분석 중 화면에서 나가면 작업(보고서·분석 결과·파일)을 지운다. 복구 불가"""
+    report_service.cancel_analysis(db, user, video_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
