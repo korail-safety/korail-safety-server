@@ -1,7 +1,10 @@
 """임시저장: 등록·목록·삭제. 본인 작업만 다룬다.
 
-임시저장 = is_draft가 true이고 아직 완성 전(ANALYSIS·STORYBOARD·GENERATION)인 작업.
+임시저장 = 아직 완성 전(ANALYSIS·STORYBOARD·GENERATION)인 작업.
+분석을 시작하면 자동으로 목록에 남는다.
+(창을 닫거나 뒤로가기로 나가도 작업이 사라지지 않게. 버리고 싶으면 삭제한다)
 완성해서 라이브러리에 저장되면(COMPLETED) 목록에서 자동으로 빠진다.
+is_draft·draft_saved_at은 "임시저장" 버튼을 누른 기록으로만 남긴다.
 """
 
 import uuid
@@ -43,7 +46,6 @@ def save_draft(db: Session, user_id: int, video_id: uuid.UUID) -> None:
 def _draft_query(user_id: int):
     return select(Video).where(
         Video.created_by == user_id,
-        Video.is_draft.is_(True),
         Video.stage.in_(DRAFT_STAGES),
     )
 
@@ -89,7 +91,7 @@ def list_drafts(
 
 def delete_draft(db: Session, user_id: int, video_id: uuid.UUID) -> None:
     video = _get_own(db, user_id, video_id)
-    if not video.is_draft or video.stage not in DRAFT_STAGES:
+    if video.stage not in DRAFT_STAGES:
         # 임시저장이 아닌 작업(업로드만 한 작업, 완성된 영상)은 여기서 지우지 않는다
         raise AppError(404, "VIDEO_NOT_FOUND", "임시저장한 작업을 찾을 수 없습니다.")
     # AI 작업이 돌고 있으면 끝난 뒤 지운 작업에 결과를 쓰려다 실패하므로 막는다
