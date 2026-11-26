@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.errors import AppError
 from app.models import Report, User, Video
 from app.models.enums import VideoStage
+from app.services.video_files import delete_video_and_files
 
 PDF_MIME_TYPE = "application/pdf"
 
@@ -127,3 +128,19 @@ def replace_report(db: Session, user: User, video_id: uuid.UUID, pdf: ValidatedP
         with contextlib.suppress(Exception):
             storage.delete(old_key)
     return video
+
+
+def cancel_analysis(db: Session, user: User, video_id: uuid.UUID) -> None:
+    """분석 중 화면에서 "나가기": 분석을 중단하고 작업(보고서·분석 결과·파일)을 지운다.
+
+    분석이 돌고 있어도 지운다. 백그라운드 분석은 작업이 지워진 걸 확인하면 멈춘다
+    (run_analysis 쪽 확인 로직 필요). 스토리보드 단계부터는 여기서 지우지 않는다.
+    """
+    video = db.get(Video, video_id)
+    if video is None:
+        raise AppError(404, "VIDEO_NOT_FOUND", "영상 작업을 찾을 수 없습니다.")
+    if video.created_by != user.id:
+        raise AppError(403, "FORBIDDEN", "본인 작업만 수정할 수 있습니다.")
+    if video.stage not in (VideoStage.UPLOADED, VideoStage.ANALYSIS):
+        raise AppError(409, "INVALID_STAGE", "분석 단계에서만 중단할 수 있습니다.")
+    delete_video_and_files(db, video)
