@@ -17,7 +17,8 @@ class Video(TimestampMixin, Base):
     """영상 작업 1개. 업로드 때 만들어져 단계가 진행되고, 저장하면 라이브러리 영상이 된다.
 
     - 라이브러리: stage = COMPLETED
-    - 임시저장: is_draft = true AND stage IN (ANALYSIS, STORYBOARD, GENERATION)
+    - 임시저장: stage IN (ANALYSIS, STORYBOARD, GENERATION) — 분석을 시작하면 자동으로 포함
+      (is_draft·draft_saved_at은 "임시저장" 버튼을 누른 기록)
     """
 
     __tablename__ = "videos"
