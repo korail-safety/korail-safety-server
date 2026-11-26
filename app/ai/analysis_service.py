@@ -18,6 +18,7 @@ from app.models.enums import ExtractedField, JobStatus
 from app.models.extracted_item import ExtractedItem
 from app.models.job import Job
 from app.models.report import Report, ReportPage
+from app.models.video import Video
 
 MODEL = "gpt-5.6-luna"
 
@@ -121,6 +122,9 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
         try:
             client = get_openai_client()
 
+            if db.get(Video, video_id) is None:  # 신규: ① READ_FILE 시작 전
+                return
+
             job.step = "READ_FILE"
             db.commit()
 
@@ -131,6 +135,10 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
 
                 pdf = pdfium.PdfDocument(pdf_bytes)
                 for i, page in enumerate(pdf):
+                    if db.get(Video, video_id) is None:  # 신규: ② 페이지 업로드 반복 중
+                        storage.delete_prefix(f"reports/{video_id}/")
+                        pdf.close()
+                        return
                     page_no = i + 1
                     textpage = page.get_textpage()
                     text = _clean_text(textpage.get_text_range() or "")
@@ -159,6 +167,10 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
 
             job.step = "EXTRACT_KEY_INFO"
             db.commit()
+
+            if db.get(Video, video_id) is None:  # 신규: ③ OpenAI 호출 전
+                pdf.close()
+                return
 
             try:
                 response = client.with_options(timeout=180.0, max_retries=1).responses.create(
@@ -213,6 +225,9 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
                     },
                 )
                 result = json.loads(response.output_text)
+
+                if db.get(Video, video_id) is None:  # 신규: ④ 결과 저장 전
+                    return
 
                 for key, field_enum in FIELD_KEY_MAP.items():
                     item = result[key]
