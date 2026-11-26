@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # 실행 환경: local / production
+    # 실행 환경: local(자동으로 low) / production
     app_env: str = "local"
 
     # PostgreSQL 접속 주소 (SQLAlchemy 형식)

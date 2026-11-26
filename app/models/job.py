@@ -33,6 +33,7 @@ class Job(Base):
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     video_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"))
     type: Mapped[JobType] = mapped_column(varchar_enum(JobType, "type"))
+    scene_index = mapped_column(Integer, nullable=True)
     status: Mapped[JobStatus] = mapped_column(
         varchar_enum(JobStatus, "status"), default=JobStatus.IN_PROGRESS
     )
