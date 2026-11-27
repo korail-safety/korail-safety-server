@@ -14,6 +14,7 @@ from app.models.extracted_item import ExtractedItem
 from app.models.job import Job
 from app.models.storyboard import Storyboard
 
+IMAGE_SIZE = "848x480"
 IMAGE_QUALITY = "low" if settings.app_env != "production" else "auto"
 CHARACTER_SHEET_PREFIX = "assets/characters/"
 TEXT_MODEL = "gpt-5.6-luna"  # analysis_service.py의 MODEL과 동일
@@ -47,7 +48,7 @@ def get_or_create_character_sheet(client, key: str, description: str) -> str:
         "full-body front view, full-body back view, and a close-up face portrait. "
         f"Character: {description}\n\n{STYLE_GUIDELINES}\n\n{SAFETY_GUIDELINES}"
     )
-    result = client.images.generate(model=IMAGE_MODEL, prompt=character_prompt, quality=IMAGE_QUALITY)
+    result = client.images.generate(model=IMAGE_MODEL, prompt=character_prompt, quality=IMAGE_QUALITY, size=IMAGE_SIZE)
     image_bytes = base64.b64decode(result.data[0].b64_json)
     storage.upload_bytes(s3_key, image_bytes, "image/png")
     return s3_key
@@ -187,14 +188,21 @@ def regenerate_scene_image(
             client = get_openai_client()
 
             try:
-                full_prompt = f"{storyboard.prompt}\n\n{STYLE_GUIDELINES}\n\n{SAFETY_GUIDELINES}"
                 if source_image_key:
-                    # 수정(revision) 요청: 기존 이미지를 편집
+                    if storyboard.revision_request:
+                        full_prompt = (
+                            f"Original scene: {storyboard.prompt}\n"
+                            f"Requested change: {storyboard.revision_request}\n\n"
+                            f"{STYLE_GUIDELINES}\n\n{SAFETY_GUIDELINES}"
+                        )
+                    else:
+                        full_prompt = f"{storyboard.prompt}\n\n{STYLE_GUIDELINES}\n\n{SAFETY_GUIDELINES}"
                     source_bytes = storage.read_bytes(source_image_key)
                     source_file = io.BytesIO(source_bytes)
                     source_file.name = "source.png"
-                    result = client.images.edit(model=IMAGE_MODEL, image=source_file, prompt=full_prompt, quality=IMAGE_QUALITY)
+                    result = client.images.edit(model=IMAGE_MODEL, image=source_file, prompt=full_prompt, quality=IMAGE_QUALITY, size=IMAGE_SIZE)
                 elif character_reference_keys:
+                    full_prompt = f"{storyboard.prompt}\n\n{STYLE_GUIDELINES}\n\n{SAFETY_GUIDELINES}"
                     # 최초 생성: 등장인물 캐릭터시트를 레퍼런스로 사용
                     image_files = []
                     for ref_key in character_reference_keys:
@@ -202,10 +210,11 @@ def regenerate_scene_image(
                         ref_file = io.BytesIO(ref_bytes)
                         ref_file.name = "character.png"
                         image_files.append(ref_file)
-                    result = client.images.edit(model=IMAGE_MODEL, image=image_files, prompt=full_prompt, quality=IMAGE_QUALITY)
+                    result = client.images.edit(model=IMAGE_MODEL, image=image_files, prompt=full_prompt, quality=IMAGE_QUALITY, size=IMAGE_SIZE)
                 else:
                     # 인물이 안 나오는 장면: 텍스트만으로 생성
-                    result = client.images.generate(model=IMAGE_MODEL, prompt=full_prompt, quality=IMAGE_QUALITY)
+                    full_prompt = f"{storyboard.prompt}\n\n{STYLE_GUIDELINES}\n\n{SAFETY_GUIDELINES}"   # 신규: 이 줄 추가
+                    result = client.images.generate(model=IMAGE_MODEL, prompt=full_prompt, quality=IMAGE_QUALITY, size=IMAGE_SIZE)
 
                 image_bytes = base64.b64decode(result.data[0].b64_json)
                 image_key = f"storyboards/{video_id}/{scene_index}/{storyboard.revision}.png"

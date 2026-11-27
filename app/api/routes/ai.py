@@ -344,7 +344,10 @@ def create_storyboard_revision(
         video_id=video_id,
         scene_index=body.scene_index,
         revision=previous.revision + 1,
-        prompt=body.prompt,
+        prompt=previous.prompt,
+        revision_request=body.prompt,      # 신규: 사용자 수정 요청은 별도 컬럼에
+        description=previous.description,  # 신규
+        duration_sec=previous.duration_sec,
     )
     db.add(storyboard)
 

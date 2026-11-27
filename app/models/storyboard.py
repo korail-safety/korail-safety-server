@@ -16,8 +16,9 @@ class Storyboard(CreatedAtMixin, Base):
     video_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"))
     scene_index = mapped_column(Integer, nullable=False)  # 1부터 시작
     revision: Mapped[int] = mapped_column(Integer)
-    # 사용자 수정 요청 (첫 생성은 NULL)
+    # 현재 장면의 영어 이미지 프롬프트
     prompt: Mapped[str | None] = mapped_column(Text)
     image_key: Mapped[str | None] = mapped_column(String(500))
     description = mapped_column(Text, nullable=True)  # 장면 설명(시나리오)
     duration_sec = mapped_column(Integer, nullable=True)  # 예상 길이(초)
+    revision_request: Mapped[str | None] = mapped_column(Text, nullable=True)  # 사용자 수정 요청 원문
