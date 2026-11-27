@@ -1,4 +1,5 @@
 import io
+import logging
 import json
 import base64
 from datetime import UTC, datetime
@@ -14,7 +15,10 @@ from app.models.extracted_item import ExtractedItem
 from app.models.job import Job
 from app.models.storyboard import Storyboard
 
-IMAGE_SIZE = "848x480"
+logger = logging.getLogger(__name__)
+
+# 16:9. 848x480은 OpenAI 최소 픽셀 기준 미달로 400 에러 (Invalid size) → 1536x864 (16의 배수, 약 130만 픽셀)
+IMAGE_SIZE = "1536x864"
 IMAGE_QUALITY = "low" if settings.app_env != "production" else "auto"
 CHARACTER_SHEET_PREFIX = "assets/characters/"
 TEXT_MODEL = "gpt-5.6-luna"  # analysis_service.py의 MODEL과 동일
@@ -229,6 +233,8 @@ def regenerate_scene_image(
 
 
         except Exception:
+            # 장면 이미지는 스레드풀에서 돌아서 예외가 로그에 안 남는다 → 직접 남긴다
+            logger.exception("장면 %s 이미지 생성 실패 (video %s)", scene_index, video_id)
             error_code = job.error_code
             db.rollback()
             job.error_code = error_code
