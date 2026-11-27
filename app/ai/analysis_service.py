@@ -115,6 +115,9 @@ def _find_source_rects(page: "pdfium.PdfPage", source_text: str) -> list[dict] |
 def run_analysis(video_id, report_id: int, job_id: int) -> None:
     """백그라운드에서 실행되는 함수라 요청용 DB 세션을 그대로 쓰면 안 되고, 새 세션을 직접 연다."""
     db = SessionLocal()
+    # 분석 중단(DELETE /videos/{videoId}/analysis)으로 영상·job이 지워졌는지.
+    # 지워졌으면 finally에서 job을 건드리지 않는다 (지워진 행을 commit하면 ObjectDeletedError)
+    cancelled = False
     try:
         report = db.get(Report, report_id)
         job = db.get(Job, job_id)
@@ -123,6 +126,7 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
             client = get_openai_client()
 
             if db.get(Video, video_id) is None:  # 신규: ① READ_FILE 시작 전
+                cancelled = True
                 return
 
             job.step = "READ_FILE"
@@ -136,6 +140,7 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
                 pdf = pdfium.PdfDocument(pdf_bytes)
                 for i, page in enumerate(pdf):
                     if db.get(Video, video_id) is None:  # 신규: ② 페이지 업로드 반복 중
+                        cancelled = True
                         storage.delete_prefix(f"reports/{video_id}/")
                         pdf.close()
                         return
@@ -169,6 +174,8 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
             db.commit()
 
             if db.get(Video, video_id) is None:  # 신규: ③ OpenAI 호출 전
+                cancelled = True
+                storage.delete_prefix(f"reports/{video_id}/")
                 pdf.close()
                 return
 
@@ -227,6 +234,8 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
                 result = json.loads(response.output_text)
 
                 if db.get(Video, video_id) is None:  # 신규: ④ 결과 저장 전
+                    cancelled = True
+                    storage.delete_prefix(f"reports/{video_id}/")
                     return
 
                 for key, field_enum in FIELD_KEY_MAP.items():
@@ -274,7 +283,8 @@ def run_analysis(video_id, report_id: int, job_id: int) -> None:
             job.status = JobStatus.FAILED
             raise
         finally:
-            job.finished_at = datetime.now(UTC)
-            db.commit()
+            if not cancelled:
+                job.finished_at = datetime.now(UTC)
+                db.commit()
     finally:
         db.close()
